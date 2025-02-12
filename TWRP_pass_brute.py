@@ -1,41 +1,65 @@
 #!/usr/bin/env python3
-import itertools
 import os
-import time  # <-- Добавляем модуль для паузы
+import time
+import argparse
+from itertools import product
 
-# Параметры
-password_symbols = '0123456789'  # Только цифры
-password_symbols_repeats = True  # Разрешить повторения
-password_length = 4  # Длина комбинации
+# Конфигурация
+SYMBOLS = '0123456789'        # Используемые символы
+ALLOW_REPEATS = True          # Разрешить повторяющиеся символы
+PASSWORD_LENGTH = 6           # Длина комбинации
 
-# Генерация комбинаций
-if password_symbols_repeats:
-    res = [''.join(x) for x in itertools.product(password_symbols, repeat=password_length)]
-else:
-    res = [''.join(x) for x in itertools.combinations(password_symbols, password_length)]
+def validate_combination(comb: str) -> bool:
+    """Проверяет корректность стартовой комбинации"""
+    return len(comb) == PASSWORD_LENGTH and all(c in SYMBOLS for c in comb)
 
-combinations_total = len(res)
-
-n = 0
-for passw in res:
-    n += 1
-    print("{}/{}: {}".format(n, combinations_total, passw))
+def generate_combinations(start: str = None) -> iter:
+    """Генератор комбинаций с возможностью старта с определенной позиции"""
+    if start is None:
+        start = SYMBOLS[0] * PASSWORD_LENGTH
+        
+    start_seq = tuple(start)
+    gen = product(SYMBOLS, repeat=PASSWORD_LENGTH) if ALLOW_REPEATS else \
+          combinations(SYMBOLS, PASSWORD_LENGTH)
     
-    # Выполняем команду
-    cmd_out = os.popen("adb shell twrp decrypt {}".format(passw)).read()
-    
-    # Проверка на ошибки
-    if "Attempting to decrypt data partition via command line" not in cmd_out:
-        print(cmd_out)
-        print('\nSomething went wrong. Check connection to your device')
-        break
-    
-    # Проверка на успешное декодирование
-    if 'Data successfully decrypted' in cmd_out:
-        print("\nYour password is: {}\nBye!".format(passw))
-        break
-    
-    time.sleep(0.3)  # <-- Добавляем паузу между попытками
+    started = False
+    for comb in gen:
+        if not started:
+            if comb == start_seq:
+                started = True
+            else:
+                continue
+        yield ''.join(comb)
 
-else:
-    print("\nNo result.")
+def main():
+    parser = argparse.ArgumentParser(description='TWRP Decryption Bruteforce')
+    parser.add_argument('-s', '--start', type=str, help='Стартовая комбинация')
+    args = parser.parse_args()
+
+    start_comb = args.start
+    if start_comb and not validate_combination(start_comb):
+        print(f"Ошибка: некорректная стартовая комбинация!")
+        exit(1)
+
+    total = 10**PASSWORD_LENGTH if ALLOW_REPEATS else \
+            len(list(combinations(SYMBOLS, PASSWORD_LENGTH)))
+
+    for n, password in enumerate(generate_combinations(start_comb), 1):
+        print(f"Попытка {n}/{total}: {password}")
+        
+        result = os.popen(f"adb shell twrp decrypt {password}").read()
+        
+        if 'Data successfully decrypted' in result:
+            print(f"\nУспех! Пароль: {password}")
+            return
+            
+        if "Attempting to decrypt" not in result:
+            print("\nОшибка выполнения команды. Проверьте подключение!")
+            return
+            
+        time.sleep(0.3)
+
+    print("\nПароль не найден")
+
+if __name__ == "__main__":
+    main()
